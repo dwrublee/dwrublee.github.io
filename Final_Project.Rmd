@@ -1,0 +1,50 @@
+---
+title: "final_project"
+output: html_document
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(rvest)
+library(httr)
+library(jsonlite)
+```
+
+I will be relying on the IEX API, which unfortunately will be retired starting June 1, to provide historical stock price information over the past 5 years. To get a list for all 500 companies included in the S&P 500 index, I will first need to scrape Wikipedia [1] create a data frame containing ticker symbol, and GICS Sector.
+
+```{r wiki_table}
+url <- "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+wiki_table <- url %>%
+  read_html() %>%
+  html_node(".wikitable") %>%
+  html_table() %>%
+  select(Symbol, Security, 'GICS Sector',CIK)
+colnames(wiki_table)[3] <- 'GICS_sector'
+wiki_table %>%
+  as_tibble()
+```
+
+It was expected that the dataframe would contain 500 rows, as the index represents the 500 largest companies traded on both NYSE and NASDAQ. CIK (Central Index Key) is a unique identifier registered to each company by the SEC; this identifier will be helpful in identifying if there are any duplicate companies within wiki_table. 
+```{r wiki_analysis}
+wiki_table %>%
+  group_by(CIK) %>%
+  summarise(double_count = n()) %>%
+  arrange(desc(double_count)) %>%
+  slice(1:5) %>%
+  left_join(wiki_table, by = "CIK") %>%
+  select(Symbol, Security, CIK) %>%
+  as_tibble()
+```
+
+The additional 5 rows are related to companies having dual class shares included in the index. Companies may offer multiple classes of shares to investors, which can differ in rights and privileges related to corporate governance among other things [2].
+
+
+
+
+
+
+
+

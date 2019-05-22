@@ -20,14 +20,6 @@ tst <- wiki_table %>%
   select(Symbol, Security)
 tst
 
-get_financials <- function(ticker){
-  end_url <- "/financials?period=annual"
-  temp <- GET(paste(root, ticker, end_url,sep="")) %>%
-    content("text") %>%
-    fromJSON()
-  as.data.frame(temp[2])
-}
-
 get_prices <- function(ticker){
   filter <- "?filter=date,close,volume"
   url <- paste(root, ticker, "/chart/5y",filter,sep="") 
@@ -65,11 +57,9 @@ for(i in 2:length(stock_list)){
 }
 
 df <- df %>%
-  arrange(date)
-
-View(df)
-
+  arrange(yq)
 
 df <- df %>%
-  select(date, ticker, close, volume, 'GICS Sector', 'GICS Sub Industry')
-
+  left_join(wiki_table, by="ticker") %>%
+  select(yq, ticker, return_3month, 'GICS Sector')
+View(df)
