@@ -11,10 +11,12 @@ library(tidyverse)
 library(rvest)
 library(httr)
 library(jsonlite)
+library(lubridate)
 ```
 
-I will be relying on the IEX API, which unfortunately will be retired starting June 1, to provide historical stock price information over the past 5 years. To get a list for all 500 companies included in the S&P 500 index, I will first need to scrape Wikipedia [1] create a data frame containing ticker symbol, and GICS Sector.
+I will be relying on the IEX API, which unfortunately will be retired starting June 1, to provide historical stock price information over the past 5 years. To get a list for all 500 companies included in the S&P 500 index, I will first need to scrape Wikipedia [1] create a data frame containing ticker symbol, and GICS Sector, as IEX does not provide this information.
 
+1. Wikipedia - S&P 500 Stock Composition
 ```{r wiki_table}
 url <- "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 wiki_table <- url %>%
@@ -23,11 +25,13 @@ wiki_table <- url %>%
   html_table() %>%
   select(Symbol, Security, 'GICS Sector',CIK)
 colnames(wiki_table)[3] <- 'GICS_sector'
+colnames(wiki_table)[1] <- 'ticker'
 wiki_table %>%
   as_tibble()
 ```
 
 It was expected that the dataframe would contain 500 rows, as the index represents the 500 largest companies traded on both NYSE and NASDAQ. CIK (Central Index Key) is a unique identifier registered to each company by the SEC; this identifier will be helpful in identifying if there are any duplicate companies within wiki_table. 
+
 ```{r wiki_analysis}
 wiki_table %>%
   group_by(CIK) %>%
@@ -35,16 +39,80 @@ wiki_table %>%
   arrange(desc(double_count)) %>%
   slice(1:5) %>%
   left_join(wiki_table, by = "CIK") %>%
-  select(Symbol, Security, CIK) %>%
+  select(ticker, Security, CIK) %>%
   as_tibble()
 ```
 
 The additional 5 rows are related to companies having dual class shares included in the index. Companies may offer multiple classes of shares to investors, which can differ in rights and privileges related to corporate governance among other things [2].
 
+2. IEX - Stock Prices
 
+```{r root_url}
+root <- "https://api.iextrading.com/1.0/stock/"
+```
 
+To make parsing the data simple, I will be using the httr and jsonlite libraries. The below function makes a GET request, filtering on the needed columns (date and closing price). Finally a column for the ticker is added, which will allow for identification when adding to the broader dataframe holding all stock returns. 
 
+```{r get_prices}
+get_prices <- function(ticker){
+  filter <- "?filter=date,close"
+  url <- paste(root, ticker, "/chart/5y",filter,sep="") 
+  temp <- GET(url) %>%
+    content("text") %>%
+    fromJSON %>%
+    mutate(ticker = ticker)
+  temp
+}
+```
 
+To calculate 3-month return, I first split the time series data by yearly quarter. The decision for this was related to stocks submitting quarterly financial reports. How markets reacted to these disclosures would then be embedded in the price. By taking the average through the period, it reduces the noise of 1-day price action. After getting an average through the quarter, the data needed to be split between 2 time frames in order to calculate the 3-month return. 
+
+```{r calc_3month}
+calc_3month <- function(stock){
+ temp_ticker <- stock$ticker[1] 
+ temp <- stock %>%
+   mutate(yq = quarter(date, with_year=TRUE)) %>%
+   group_by(yq) %>%
+   summarise(average_close=mean(close))
+ temp_1 <- slice(temp, 1:nrow(temp) - 1) %>% rowid_to_column()
+ temp_2 <- slice(temp, 2:nrow(temp)) %>% rowid_to_column()
+ temp_1_close <- pull(temp_1,average_close)
+ temp_2_close <- pull(temp_2,average_close)
+ return_3month <- (temp_2_close - temp_1_close) / temp_1_close
+ temp_2 <- temp_2 %>% 
+   cbind(return_3month) %>%
+   select(yq, return_3month) %>%
+   mutate(ticker = temp_ticker)
+ temp_2
+}
+```
+
+3. S&P 500 DataFrame
+With the 2 functions needed to create the desired dataframe, I will iterate through each ticker from the wiki_table and call the functions, binding the returned prices to sp500. Afterwards I will sort by yearly quarter to make it more easily read.
+
+```{r sp500}
+sp500_list <- pull(wiki_table, ticker)
+sp500 <- calc_3month(get_prices(sp500_list[1]))
+for(i in 2:length(sp500_list))
+  sp500 <- rbind(sp500,calc_3month(get_prices(sp500_list[i])))
+sp500 <- sp500 %>%
+  arrange(yq)
+as_tibble(sp500)
+```
+
+Before joining with the wiki_table, it would be helpful to get a brief summary of how stocks performed over the time period. However, the analysis must be kept to before 2019, as Q1 2019 is the period to be predicted. 
+
+```{r simple_eda}
+sp500 %>%
+  filter(yq < 2019) %>%
+  ggplot(aes(return_3month)) + 
+  geom_density() + 
+  geom_vline(aes(xintercept=median(return_3month)), color="red")
+```
+
+As is apparent from the above, stocks during the time period analyzed had a positive 3 month return. 
+
+Finally, we will add the GICS Sector from the wikitable and 
 
 
 
