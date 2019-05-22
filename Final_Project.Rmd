@@ -210,6 +210,6 @@ sector_fit %>% tidy() %>% arrange(p.value) %>% select(term, p.value, everything(
 In addition to the time-frame variables being of statistical significance, Real Estate as a categorical variable is also included. 
 
 
-[1] <- https://www.msci.com/gics
+[1] <- https://www.msci.com/gics   
 [2] <- https://www.investopedia.com/terms/s/share_class.asp
 
