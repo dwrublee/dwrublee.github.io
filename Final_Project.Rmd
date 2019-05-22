@@ -12,11 +12,13 @@ library(rvest)
 library(httr)
 library(jsonlite)
 library(lubridate)
+library(broom)
+
 ```
 
 I will be relying on the IEX API, which unfortunately will be retired starting June 1, to provide historical stock price information over the past 5 years. To get a list for all 500 companies included in the S&P 500 index, I will first need to scrape Wikipedia [1] create a data frame containing ticker symbol, and GICS Sector, as IEX does not provide this information.
 
-1. Wikipedia - S&P 500 Stock Composition
+1. Wikipedia - S&P 500 Stock Composition 
 ```{r wiki_table}
 url <- "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 wiki_table <- url %>%
@@ -43,15 +45,15 @@ wiki_table %>%
   as_tibble()
 ```
 
-The additional 5 rows are related to companies having dual class shares included in the index. Companies may offer multiple classes of shares to investors, which can differ in rights and privileges related to corporate governance among other things [2].
-
-2. IEX - Stock Prices
+The additional 5 rows are related to companies having dual class shares included in the index. Companies may offer multiple classes of shares to investors, which can differ in rights and privileges related to corporate governance among other things [2]. 
+ 
+2. IEX - Stock Prices 
 
 ```{r root_url}
 root <- "https://api.iextrading.com/1.0/stock/"
 ```
 
-To make parsing the data simple, I will be using the httr and jsonlite libraries. The below function makes a GET request, filtering on the needed columns (date and closing price). Finally a column for the ticker is added, which will allow for identification when adding to the broader dataframe holding all stock returns. 
+To make parsing the data simple, I will be using the httr and jsonlite libraries. The below function makes a GET request, filtering on the needed columns (date and closing price). Finally a column for the ticker is added, which will allow for identification when adding to the broader dataframe holding all stock returns.  
 
 ```{r get_prices}
 get_prices <- function(ticker){
@@ -87,7 +89,7 @@ calc_3month <- function(stock){
 }
 ```
 
-3. S&P 500 DataFrame
+3. S&P 500 DataFrame 
 With the 2 functions needed to create the desired dataframe, I will iterate through each ticker from the wiki_table and call the functions, binding the returned prices to sp500. Afterwards I will sort by yearly quarter to make it more easily read.
 
 ```{r sp500}
@@ -110,9 +112,97 @@ sp500 %>%
   geom_vline(aes(xintercept=median(return_3month)), color="red")
 ```
 
-As is apparent from the above, stocks during the time period analyzed had a positive 3 month return. 
+As is apparent from the above, a little over half of stocks during the time period analyzed had a positive 3 month return. 
 
-Finally, we will add the GICS Sector from the wikitable and 
+Finally, we will add the GICS Sector from the wikitable and group the dataframe by GICS Sector. 
+
+```{r merge_dataframes}
+sp500 <- sp500 %>%
+  left_join(wiki_table, by="ticker") %>%
+  select(-c("CIK","Security"))
+
+sp500$GICS_sector <- factor(sp500$GICS_sector)
+as_tibble(sp500)
+```
+
+With sp500 now including GICS Sector, we are able to see the variability in 3-month returns by industry. 
+
+```{r sector_eda}
+summary_stats <- sp500 %>% 
+  filter(yq < 2019) %>%
+  group_by(GICS_sector) %>%
+  summarise(mean_return = mean(return_3month), sd_return = sd(return_3month)) %>%
+  arrange(desc(mean_return))
+summary_stats
+```
+
+Out of curiosity, let us see what the top performers within Information Technology. 
+
+```{r info_tech}
+sp500 %>%
+  filter(yq < 2019 & GICS_sector == 'Information Technology') %>%
+  arrange(desc(return_3month)) %>%
+  slice(1:10)
+```
+
+Both Advanced Micro Devices (AMD) and Nvidia (NVDA) are strategically positioned in the current AI/ML euphoria. 
+
+An underlying principle that all investing follows, is that for taking on more risk (as measured by standard deviation) you should be rewarded with higher returns. It is hard to see if this relationship can be viewed at the industry level. However, it is clear that there are certain industries that had performed comparably but with differing risk levels. Further, Energy seemed to perform both terribly and have the highest level of risk. This is due to Energy being highly sensitive to commodity prices, which fluctuate cosiderably due to events outside of stock markets.
+
+```{r plot return vs sd}
+summary_stats %>%
+  ggplot(aes(sd_return, mean_return, color=GICS_sector)) + 
+  geom_point() 
+```
+
+4. Creating Model and Extracting Outcome_Df
+With a finalized dataset, we can extract the outcome_df and design a statistical model to predict stock performance. 
+
+The outcome df will have a categorical outcome of 1 meaning up and 0 meaning down depending on the return for Q1 2019.
+
+```{r outcome_df}
+outcome_df <- sp500 %>%
+  filter(yq == '2019.1') %>%
+  select(yq, ticker, return_3month) %>%
+  mutate(direction = ifelse(return_3month > 0, 1, 0)) %>%
+  select(ticker, direction)
+outcome_df
+```
+
+Now we will filter the sp500 dataframe to the required time frame, everything before 2019, and spread yq as columns with respect to return_3month. This will allow the model to use each quarterly time frame per ticker, and rejoin the outcome_df. 
+```{r model_generation}
+final_df <- sp500 %>%
+  filter(yq < 2019) %>%
+  spread(yq, return_3month) %>%
+  left_join(outcome_df, by="ticker") 
+final_df
+```
+
+Before fitting the model, the dataframe must be split between training and testing. This is accomplished by grouping final_df by the predictor variable (direction), and then sampling half from each group. The train data will just be whatever has not been included in test_df. 
+
+```{r train_test}
+set.seed(1234)
+test_df <- final_df %>%
+  group_by(direction) %>%
+  sample_frac(0.5) %>%
+  ungroup()
+
+train_df <- final_df %>%
+  anti_join(test_df, by="ticker")
+```
+
+With the data evenly partitioned between test and train, a logistic regression model can be fitted for both simple and complex. The model will be fitted on all parameters excluding ticker.
+
+```{r model_fit}
+library(knitr)
+simplefit <- glm(direction ~ . -ticker, family='binomial', data=train_df)
+fit %>% tidy() %>% arrange(p.value) %>% select(term, p.value, everything())
+```
+
+
+
+
+
 
 
 
