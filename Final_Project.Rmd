@@ -3,6 +3,7 @@ title: "final_project"
 output: html_document
 ---
 
+Motivation: Primarily when analyzing stock run performance there is a tendency to focus on company specific returns. However, does the industry of which the stock belongs have any predictive capability? Each stock in the S&P 500 index is classified by a GICS Code [1]. The objective is to see whether or not GICS industry classifiers provide any additional predictive capabilities in predicting whether or not a stock will go up or down in the Q1 2019. 
 
 
 ```{r setup, include=FALSE}
@@ -16,7 +17,7 @@ library(broom)
 
 ```
 
-I will be relying on the IEX API, which unfortunately will be retired starting June 1, to provide historical stock price information over the past 5 years. To get a list for all 500 companies included in the S&P 500 index, I will first need to scrape Wikipedia [1] create a data frame containing ticker symbol, and GICS Sector, as IEX does not provide this information.
+I will be relying on the IEX API, which unfortunately will be retired starting June 1, to provide historical stock price information over the past 5 years. To get a list for all 500 companies included in the S&P 500 index, I will first need to scrape the Wikipedia page for the S&P 500 to create a data frame containing ticker symbol, and GICS Sector, as IEX does not provide this information.
 
 1. Wikipedia - S&P 500 Stock Composition 
 ```{r wiki_table}
@@ -166,16 +167,16 @@ outcome_df <- sp500 %>%
   select(yq, ticker, return_3month) %>%
   mutate(direction = ifelse(return_3month > 0, 1, 0)) %>%
   select(ticker, direction)
-outcome_df
+outcome_df %>% as_tibble()
 ```
 
 Now we will filter the sp500 dataframe to the required time frame, everything before 2019, and spread yq as columns with respect to return_3month. This will allow the model to use each quarterly time frame per ticker, and rejoin the outcome_df. 
-```{r model_generation}
+```{r final_df}
 final_df <- sp500 %>%
   filter(yq < 2019) %>%
   spread(yq, return_3month) %>%
   left_join(outcome_df, by="ticker") 
-final_df
+final_df %>% as_tibble()
 ```
 
 Before fitting the model, the dataframe must be split between training and testing. This is accomplished by grouping final_df by the predictor variable (direction), and then sampling half from each group. The train data will just be whatever has not been included in test_df. 
@@ -191,18 +192,24 @@ train_df <- final_df %>%
   anti_join(test_df, by="ticker")
 ```
 
-With the data evenly partitioned between test and train, a logistic regression model can be fitted for both simple and complex. The model will be fitted on all parameters excluding ticker.
+With the data evenly partitioned between test and train, a logistic regression model can be fitted for both simple and with GICS_sector. The model will be fitted on all parameters excluding ticker.
 
 ```{r model_fit}
 library(knitr)
-simplefit <- glm(direction ~ . -ticker, family='binomial', data=train_df)
-fit %>% tidy() %>% arrange(p.value) %>% select(term, p.value, everything())
+simple_fit <- glm(direction ~ . -ticker -GICS_sector, data=train_df , family='binomial')
+simple_fit %>% tidy() %>% arrange(p.value) %>% select(term, p.value, everything())
+```
+When judging by p.value alone, with a statistical significance of 0.05, it would appear that several of the quarterly variables hold predictive capability. 
+
+
+```{r sector_fit}
+sector_fit <- glm(direction ~ . -ticker, family='binomial', data=train_df)
+sector_fit %>% tidy() %>% arrange(p.value) %>% select(term, p.value, everything())
 ```
 
+In addition to the time-frame variables being of statistical significance, Real Estate as a categorical variable is also included. 
 
 
-
-
-
-
+[1] <- https://www.msci.com/gics
+[2] <- https://www.investopedia.com/terms/s/share_class.asp
 
